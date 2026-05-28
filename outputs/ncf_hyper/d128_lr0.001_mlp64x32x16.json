@@ -1,0 +1,29 @@
+{
+  "params": {
+    "embedding_dim": 128,
+    "lr": 0.001,
+    "mlp_layers": [
+      64,
+      32,
+      16
+    ]
+  },
+  "metrics": {
+    "Precision@5": 0.0023,
+    "Recall@5": 0.0113,
+    "HitRate@5": 0.0113,
+    "MAP@5": 0.0061,
+    "NDCG@5": 0.0074,
+    "Precision@10": 0.0018,
+    "Recall@10": 0.0181,
+    "HitRate@10": 0.0181,
+    "MAP@10": 0.0071,
+    "NDCG@10": 0.0096,
+    "Precision@20": 0.0017,
+    "Recall@20": 0.0336,
+    "HitRate@20": 0.0336,
+    "MAP@20": 0.0081,
+    "NDCG@20": 0.0135
+  },
+  "time": 96.7
+}

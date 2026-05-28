@@ -1,12 +1,14 @@
 """Neural Collaborative Filtering (NCF) model in PyTorch."""
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-
+from tqdm import tqdm
 
 from src.utils import sample_train_negatives, ensure_binary_labels
+from src.plotting import plot_training_history
 
 
 class InteractionDataset(Dataset):
@@ -45,7 +47,7 @@ class NCF(nn.Module):
         for dim in mlp_layers:
             layers.append(nn.Linear(mlp_input_dim, dim))
             layers.append(nn.ReLU())
-            layers.append(nn.Dropout(0.2))
+            layers.append(nn.Dropout(0.3))
             mlp_input_dim = dim
         self.mlp = nn.Sequential(*layers)
 
@@ -80,8 +82,10 @@ class NCF(nn.Module):
         score = self.sigmoid(self.output_layer(concat))
         return score.squeeze(-1)
 
-    def recommend(self, user_id, n_items, k, exclude=None, device="cpu"):
+    def recommend(self, user_id, n_items, k, exclude=None, device=None):
         """Generate top-k recommendations for a user."""
+        if device is None:
+            device = next(self.parameters()).device
         self.eval()
         with torch.no_grad():
             user_tensor = torch.LongTensor([user_id] * n_items).to(device)
@@ -96,12 +100,14 @@ class NCF(nn.Module):
         return top_items.tolist()
 
 
-def train_ncf(model, train_pos_df, val_df, config, n_items, device="cpu"):
+def train_ncf(model, train_pos_df, val_df, config, n_items, device=None):
     """Train NCF model with early stopping.
 
     train_pos_df: train.csv positives (user_id, item_id) or labeled train_neg with label=1 rows.
     When resample_per_epoch=True, negatives are redrawn each epoch (see 数据处理详细计划 §5).
     """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     neg_ratio = config["negative_sampling"]["neg_ratio"]
     resample = config["negative_sampling"].get("resample_per_epoch", True)
     base_seed = config["seed"]
@@ -113,20 +119,42 @@ def train_ncf(model, train_pos_df, val_df, config, n_items, device="cpu"):
 
     val_df = ensure_binary_labels(val_df)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=config["model"]["learning_rate"])
+    # 为验证集采样负样本，使 val_loss 可比
+    val_neg = sample_train_negatives(
+        val_df[val_df["label"] == 1][["user_id", "item_id"]],
+        n_items, neg_ratio=neg_ratio, seed=base_seed + 9999
+    )
+    val_df = val_df[val_df["label"] == 1][["user_id", "item_id"]].copy()
+    val_df["label"] = 1
+    val_df = pd.concat([val_df, val_neg[val_neg["label"] == 0]], ignore_index=True)
+
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=config["model"]["learning_rate"], weight_decay=1e-5
+    )
     criterion = nn.BCELoss()
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-5
+    )
 
     best_val_loss = float("inf")
+    best_val_hitrate = 0.0
     patience_counter = 0
     patience = config["model"]["early_stop_patience"]
     best_state = None
+
+    train_losses, val_losses, lr_history, val_hitrates = [], [], [], []
+
+    # 验证集正样本（用于计算 HitRate）
+    val_pos_df = val_df[val_df["label"] == 1][["user_id", "item_id"]].copy()
+    val_users_items = val_pos_df.groupby("user_id")["item_id"].apply(set).to_dict()
 
     if not resample:
         static_train = sample_train_negatives(
             train_pos_df, n_items, neg_ratio=neg_ratio, seed=base_seed
         )
 
-    for epoch in range(config["model"]["epochs"]):
+    epoch_iter = tqdm(range(config["model"]["epochs"]), desc="NCF Training", unit="epoch")
+    for epoch in epoch_iter:
         if resample:
             train_data = sample_train_negatives(
                 train_pos_df, n_items, neg_ratio=neg_ratio, seed=base_seed + epoch
@@ -144,17 +172,20 @@ def train_ncf(model, train_pos_df, val_df, config, n_items, device="cpu"):
         total_loss = 0
         n_batches = 0
 
-        for users, items, labels in loader:
+        batch_iter = tqdm(loader, desc=f"  Epoch {epoch + 1}", leave=False, unit="batch")
+        for users, items, labels in batch_iter:
             users, items, labels = users.to(device), items.to(device), labels.to(device)
 
             optimizer.zero_grad()
             preds = model(users, items)
             loss = criterion(preds, labels)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             total_loss += loss.item()
             n_batches += 1
+            batch_iter.set_postfix(loss=f"{loss.item():.4f}")
 
         avg_loss = total_loss / n_batches
 
@@ -173,19 +204,50 @@ def train_ncf(model, train_pos_df, val_df, config, n_items, device="cpu"):
                 val_n += len(labels)
         val_loss /= val_n
 
-        if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"    Epoch {epoch + 1}: train_loss={avg_loss:.4f}, val_loss={val_loss:.4f}")
+        # 计算 HitRate@10（ranking 指标，比 BCELoss 更可靠）
+        val_hitrate = 0.0
+        val_k = 10
+        for uid, relevant_items in val_users_items.items():
+            train_items = set(
+                train_pos_df[train_pos_df["user_id"] == uid]["item_id"].values
+            )
+            recs = model.recommend(uid, n_items, val_k, exclude=train_items)
+            if any(r in relevant_items for r in recs):
+                val_hitrate += 1.0
+        val_hitrate /= len(val_users_items) if val_users_items else 1.0
 
-        if val_loss < best_val_loss:
+        epoch_iter.set_postfix(
+            train_loss=f"{avg_loss:.4f}",
+            val_loss=f"{val_loss:.4f}",
+            hitrate=f"{val_hitrate:.4f}"
+        )
+
+        train_losses.append(avg_loss)
+        val_losses.append(val_loss)
+        lr_history.append(optimizer.param_groups[0]["lr"])
+        val_hitrates.append(val_hitrate)
+
+        scheduler.step(val_loss)
+
+        # 用 HitRate 做早停（ranking 指标比 pointwise loss 更可靠）
+        if val_hitrate > best_val_hitrate:
+            best_val_hitrate = val_hitrate
             best_val_loss = val_loss
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             patience_counter = 0
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"    Early stopping at epoch {epoch + 1}")
-                break
+                current_lr = optimizer.param_groups[0]["lr"]
+                if current_lr <= scheduler.min_lrs[0]:
+                    tqdm.write(f"    Early stopping at epoch {epoch + 1} (best HitRate@10={best_val_hitrate:.4f})")
+                    break
 
     if best_state:
         model.load_state_dict(best_state)
+    plot_training_history(
+        train_losses, val_losses, lr_history,
+        "outputs/plots/ncf_training.png",
+        val_hitrates=val_hitrates
+    )
     return model

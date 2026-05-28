@@ -1,0 +1,28 @@
+# 基础科学计算
+pandas>=1.5.0,<2.0.0
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
+# PyTorch GPU (支持 Tesla P4 CUDA 6.1)
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch==2.4.0+cu118
+torchvision==0.19.0+cu118
+torchaudio==2.4.0+cu118
+
+# 深度学习核心 (版本兼容性已验证)
+sentence-transformers==2.2.2
+transformers==4.36.2
+
+# 可视化和工具
+shap>=0.45.0
+streamlit>=1.35.0
+plotly>=5.24.0
+matplotlib>=3.8.0
+wordcloud>=1.9.0
+tqdm>=4.66.0
+nltk>=3.8.1
+
+# 其他依赖
+packaging>=23.0
+pillow>=10.0.0

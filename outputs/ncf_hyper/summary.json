@@ -1,0 +1,350 @@
+[
+  {
+    "params": {
+      "embedding_dim": 128,
+      "lr": 0.001,
+      "mlp_layers": [
+        128,
+        64,
+        32
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0023,
+      "Recall@5": 0.0115,
+      "HitRate@5": 0.0115,
+      "MAP@5": 0.0062,
+      "NDCG@5": 0.0075,
+      "Precision@10": 0.002,
+      "Recall@10": 0.0204,
+      "HitRate@10": 0.0204,
+      "MAP@10": 0.0073,
+      "NDCG@10": 0.0103,
+      "Precision@20": 0.0018,
+      "Recall@20": 0.0363,
+      "HitRate@20": 0.0363,
+      "MAP@20": 0.0084,
+      "NDCG@20": 0.0143
+    },
+    "time": 97.6
+  },
+  {
+    "params": {
+      "embedding_dim": 64,
+      "lr": 0.001,
+      "mlp_layers": [
+        128,
+        64,
+        32
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0025,
+      "Recall@5": 0.0125,
+      "HitRate@5": 0.0125,
+      "MAP@5": 0.0065,
+      "NDCG@5": 0.008,
+      "Precision@10": 0.0018,
+      "Recall@10": 0.0183,
+      "HitRate@10": 0.0183,
+      "MAP@10": 0.0072,
+      "NDCG@10": 0.0098,
+      "Precision@20": 0.0018,
+      "Recall@20": 0.0353,
+      "HitRate@20": 0.0353,
+      "MAP@20": 0.0083,
+      "NDCG@20": 0.014
+    },
+    "time": 95.3
+  },
+  {
+    "params": {
+      "embedding_dim": 128,
+      "lr": 0.0005,
+      "mlp_layers": [
+        128,
+        64,
+        32
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0021,
+      "Recall@5": 0.0107,
+      "HitRate@5": 0.0107,
+      "MAP@5": 0.0052,
+      "NDCG@5": 0.0065,
+      "Precision@10": 0.0021,
+      "Recall@10": 0.0208,
+      "HitRate@10": 0.0208,
+      "MAP@10": 0.0065,
+      "NDCG@10": 0.0098,
+      "Precision@20": 0.0017,
+      "Recall@20": 0.0347,
+      "HitRate@20": 0.0347,
+      "MAP@20": 0.0074,
+      "NDCG@20": 0.0132
+    },
+    "time": 113.5
+  },
+  {
+    "params": {
+      "embedding_dim": 64,
+      "lr": 0.0005,
+      "mlp_layers": [
+        64,
+        32,
+        16
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0022,
+      "Recall@5": 0.0111,
+      "HitRate@5": 0.0111,
+      "MAP@5": 0.0058,
+      "NDCG@5": 0.0071,
+      "Precision@10": 0.0019,
+      "Recall@10": 0.0193,
+      "HitRate@10": 0.0193,
+      "MAP@10": 0.0068,
+      "NDCG@10": 0.0097,
+      "Precision@20": 0.0017,
+      "Recall@20": 0.0349,
+      "HitRate@20": 0.0349,
+      "MAP@20": 0.0079,
+      "NDCG@20": 0.0136
+    },
+    "time": 105.6
+  },
+  {
+    "params": {
+      "embedding_dim": 64,
+      "lr": 0.001,
+      "mlp_layers": [
+        64,
+        32,
+        16
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0023,
+      "Recall@5": 0.0115,
+      "HitRate@5": 0.0115,
+      "MAP@5": 0.0057,
+      "NDCG@5": 0.0071,
+      "Precision@10": 0.0019,
+      "Recall@10": 0.0193,
+      "HitRate@10": 0.0193,
+      "MAP@10": 0.0067,
+      "NDCG@10": 0.0096,
+      "Precision@20": 0.0018,
+      "Recall@20": 0.0355,
+      "HitRate@20": 0.0355,
+      "MAP@20": 0.0079,
+      "NDCG@20": 0.0137
+    },
+    "time": 278.9
+  },
+  {
+    "params": {
+      "embedding_dim": 128,
+      "lr": 0.001,
+      "mlp_layers": [
+        64,
+        32,
+        16
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0023,
+      "Recall@5": 0.0113,
+      "HitRate@5": 0.0113,
+      "MAP@5": 0.0061,
+      "NDCG@5": 0.0074,
+      "Precision@10": 0.0018,
+      "Recall@10": 0.0181,
+      "HitRate@10": 0.0181,
+      "MAP@10": 0.0071,
+      "NDCG@10": 0.0096,
+      "Precision@20": 0.0017,
+      "Recall@20": 0.0336,
+      "HitRate@20": 0.0336,
+      "MAP@20": 0.0081,
+      "NDCG@20": 0.0135
+    },
+    "time": 96.7
+  },
+  {
+    "params": {
+      "embedding_dim": 32,
+      "lr": 0.001,
+      "mlp_layers": [
+        128,
+        64,
+        32
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0021,
+      "Recall@5": 0.0103,
+      "HitRate@5": 0.0103,
+      "MAP@5": 0.0045,
+      "NDCG@5": 0.0059,
+      "Precision@10": 0.0019,
+      "Recall@10": 0.0187,
+      "HitRate@10": 0.0187,
+      "MAP@10": 0.0056,
+      "NDCG@10": 0.0086,
+      "Precision@20": 0.0016,
+      "Recall@20": 0.0322,
+      "HitRate@20": 0.0322,
+      "MAP@20": 0.0065,
+      "NDCG@20": 0.012
+    },
+    "time": 208.9
+  },
+  {
+    "params": {
+      "embedding_dim": 32,
+      "lr": 0.001,
+      "mlp_layers": [
+        64,
+        32,
+        16
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.002,
+      "Recall@5": 0.0099,
+      "HitRate@5": 0.0099,
+      "MAP@5": 0.0049,
+      "NDCG@5": 0.0061,
+      "Precision@10": 0.0017,
+      "Recall@10": 0.0173,
+      "HitRate@10": 0.0173,
+      "MAP@10": 0.0059,
+      "NDCG@10": 0.0085,
+      "Precision@20": 0.0016,
+      "Recall@20": 0.0322,
+      "HitRate@20": 0.0322,
+      "MAP@20": 0.0068,
+      "NDCG@20": 0.0122
+    },
+    "time": 150.1
+  },
+  {
+    "params": {
+      "embedding_dim": 128,
+      "lr": 0.0005,
+      "mlp_layers": [
+        64,
+        32,
+        16
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0018,
+      "Recall@5": 0.0089,
+      "HitRate@5": 0.0089,
+      "MAP@5": 0.0041,
+      "NDCG@5": 0.0052,
+      "Precision@10": 0.0018,
+      "Recall@10": 0.0175,
+      "HitRate@10": 0.0175,
+      "MAP@10": 0.0052,
+      "NDCG@10": 0.008,
+      "Precision@20": 0.0016,
+      "Recall@20": 0.0312,
+      "HitRate@20": 0.0312,
+      "MAP@20": 0.0061,
+      "NDCG@20": 0.0114
+    },
+    "time": 98.2
+  },
+  {
+    "params": {
+      "embedding_dim": 32,
+      "lr": 0.0005,
+      "mlp_layers": [
+        64,
+        32,
+        16
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0014,
+      "Recall@5": 0.0069,
+      "HitRate@5": 0.0069,
+      "MAP@5": 0.0031,
+      "NDCG@5": 0.004,
+      "Precision@10": 0.0012,
+      "Recall@10": 0.0117,
+      "HitRate@10": 0.0117,
+      "MAP@10": 0.0037,
+      "NDCG@10": 0.0055,
+      "Precision@20": 0.0011,
+      "Recall@20": 0.022,
+      "HitRate@20": 0.022,
+      "MAP@20": 0.0044,
+      "NDCG@20": 0.0081
+    },
+    "time": 140.1
+  },
+  {
+    "params": {
+      "embedding_dim": 32,
+      "lr": 0.0005,
+      "mlp_layers": [
+        128,
+        64,
+        32
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0012,
+      "Recall@5": 0.006,
+      "HitRate@5": 0.006,
+      "MAP@5": 0.0027,
+      "NDCG@5": 0.0035,
+      "Precision@10": 0.0012,
+      "Recall@10": 0.0121,
+      "HitRate@10": 0.0121,
+      "MAP@10": 0.0035,
+      "NDCG@10": 0.0054,
+      "Precision@20": 0.0012,
+      "Recall@20": 0.0242,
+      "HitRate@20": 0.0242,
+      "MAP@20": 0.0042,
+      "NDCG@20": 0.0084
+    },
+    "time": 240.6
+  },
+  {
+    "params": {
+      "embedding_dim": 64,
+      "lr": 0.0005,
+      "mlp_layers": [
+        128,
+        64,
+        32
+      ]
+    },
+    "metrics": {
+      "Precision@5": 0.0009,
+      "Recall@5": 0.0044,
+      "HitRate@5": 0.0044,
+      "MAP@5": 0.0021,
+      "NDCG@5": 0.0027,
+      "Precision@10": 0.0008,
+      "Recall@10": 0.0081,
+      "HitRate@10": 0.0081,
+      "MAP@10": 0.0026,
+      "NDCG@10": 0.0038,
+      "Precision@20": 0.001,
+      "Recall@20": 0.0199,
+      "HitRate@20": 0.0199,
+      "MAP@20": 0.0034,
+      "NDCG@20": 0.0068
+    },
+    "time": 81.1
+  }
+]

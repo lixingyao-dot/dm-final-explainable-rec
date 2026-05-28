@@ -8,6 +8,9 @@ import torch
 import torch.nn as nn
 import scipy.sparse as sp
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+
+from src.plotting import plot_training_history
 
 
 class BPRDataset(Dataset):
@@ -89,8 +92,10 @@ class LightGCN(nn.Module):
         i_emb = item_emb[item_ids]
         return (u_emb * i_emb).sum(dim=-1)
 
-    def recommend(self, user_id, n_items, k, exclude=None, adj_norm=None, device="cpu"):
+    def recommend(self, user_id, n_items, k, exclude=None, adj_norm=None, device=None):
         """Generate top-k recommendations for a user."""
+        if device is None:
+            device = next(self.parameters()).device
         self.eval()
         with torch.no_grad():
             user_emb, item_emb = self.forward(adj_norm)
@@ -144,24 +149,35 @@ def bpr_loss(pos_scores, neg_scores):
     return -torch.mean(torch.log(torch.sigmoid(pos_scores - neg_scores) + 1e-8))
 
 
-def train_lightgcn(model, train_df, val_df, adj_norm, config, device="cpu"):
+def train_lightgcn(model, train_df, val_df, adj_norm, config, device=None):
     """Train LightGCN with BPR loss and early stopping."""
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     dataset = BPRDataset(train_df, config["model"].get("n_items", train_df["item_id"].nunique()))
     loader = DataLoader(dataset, batch_size=config["model"]["batch_size"], shuffle=True)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=config["model"]["learning_rate"])
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=config["model"]["learning_rate"], weight_decay=1e-5
+    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-5
+    )
 
     best_val_loss = float("inf")
     patience_counter = 0
     patience = config["model"]["early_stop_patience"]
     best_state = None
 
-    for epoch in range(config["model"]["epochs"]):
+    train_losses, lr_history = [], []
+
+    epoch_iter = tqdm(range(config["model"]["epochs"]), desc="LightGCN Training", unit="epoch")
+    for epoch in epoch_iter:
         model.train()
         total_loss = 0
         n_batches = 0
 
-        for user_ids, pos_ids, neg_ids in loader:
+        batch_iter = tqdm(loader, desc=f"  Epoch {epoch + 1}", leave=False, unit="batch")
+        for user_ids, pos_ids, neg_ids in batch_iter:
             user_ids = user_ids.squeeze().to(device)
             pos_ids = pos_ids.squeeze().to(device)
             neg_ids = neg_ids.squeeze().to(device)
@@ -174,15 +190,21 @@ def train_lightgcn(model, train_df, val_df, adj_norm, config, device="cpu"):
 
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             total_loss += loss.item()
             n_batches += 1
+            batch_iter.set_postfix(loss=f"{loss.item():.4f}")
 
         avg_loss = total_loss / n_batches
 
-        if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"    Epoch {epoch + 1}: bpr_loss={avg_loss:.4f}")
+        epoch_iter.set_postfix(bpr_loss=f"{avg_loss:.4f}")
+
+        train_losses.append(avg_loss)
+        lr_history.append(optimizer.param_groups[0]["lr"])
+
+        scheduler.step(avg_loss)
 
         # Simple early stopping on training loss (val loss needs full forward pass)
         if avg_loss < best_val_loss:
@@ -192,9 +214,15 @@ def train_lightgcn(model, train_df, val_df, adj_norm, config, device="cpu"):
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"    Early stopping at epoch {epoch + 1}")
-                break
+                current_lr = optimizer.param_groups[0]["lr"]
+                if current_lr <= scheduler.min_lrs[0]:
+                    tqdm.write(f"    Early stopping at epoch {epoch + 1}")
+                    break
 
     if best_state:
         model.load_state_dict(best_state)
+    plot_training_history(
+        train_losses, [], lr_history,
+        "outputs/plots/lightgcn_training.png"
+    )
     return model

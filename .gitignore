@@ -29,7 +29,7 @@ data/processed/
 checkpoints/
 runs/
 logs/
-*.pt
+# *.pt
 *.pth
 *.ckpt
 
