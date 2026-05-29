@@ -3,6 +3,18 @@
 import numpy as np
 
 
+def _build_candidate_set(test_items: set, train_items: set, n_items: int, n_negatives: int, rng: np.random.Generator):
+    """Sample negative items for one user. Returns (candidates: list, relevant_items: set)."""
+    pos = list(test_items)
+    seen = train_items | test_items
+    pool = [i for i in range(n_items) if i not in seen]
+    neg = rng.choice(pool, size=min(n_negatives, len(pool)), replace=False).tolist()
+
+    candidates = neg + pos
+    rng.shuffle(candidates)
+    return candidates, set(pos)
+
+
 def precision_at_k(recommended: list, relevant: set, k: int) -> float:
     """Precision@K = |recommended ∩ relevant| / K"""
     rec_k = recommended[:k]
@@ -79,6 +91,49 @@ def evaluate_model(model, test_df, train_df, n_items, top_ks=(5, 10, 20)):
             results[f"NDCG@{k}"].append(ndcg_at_k(recommended, relevant, k))
 
     # Average over all users
+    return {k: round(np.mean(v), 4) for k, v in results.items()}
+
+
+def evaluate_model_sampled(model, test_df, train_df, n_items, n_negatives=99, top_ks=(5, 10, 20), seed=42):
+    """
+    Sampled evaluation: only rank within 1 positive + N random negatives per user.
+
+    This avoids the optimistic-baseline problem of ranking every item.
+    """
+    rng = np.random.default_rng(seed)
+    train_items_per_user = train_df.groupby("user_id")["item_id"].apply(set).to_dict()
+
+    results = {f"{metric}@{k}": [] for k in top_ks
+               for metric in ["Precision", "Recall", "HitRate", "MAP", "NDCG"]}
+
+    for user_id, group in test_df.groupby("user_id"):
+        relevant = set(group["item_id"].tolist())
+        train_items = train_items_per_user.get(user_id, set())
+
+        # Build candidate set: N negatives + test positives
+        candidates, pos_set = _build_candidate_set(relevant, train_items, n_items, n_negatives, rng)
+
+        # Score only the candidate items (fast path for models that support it)
+        if hasattr(model, "score_items"):
+            scores = model.score_items(user_id, candidates)
+            order = np.argsort(scores)[::-1]
+            ranked = [candidates[i] for i in order]
+        else:
+            # Fallback: full ranking → project onto candidate set
+            full_recs = model.recommend(user_id, n_items, n_items, exclude=train_items)
+            candidate_set = set(candidates)
+            ranked = [item for item in full_recs if item in candidate_set]
+            for item in candidates:
+                if item not in candidate_set.intersection(ranked):
+                    ranked.append(item)
+
+        for k in top_ks:
+            results[f"Precision@{k}"].append(precision_at_k(ranked, pos_set, k))
+            results[f"Recall@{k}"].append(recall_at_k(ranked, pos_set, k))
+            results[f"HitRate@{k}"].append(hit_rate_at_k(ranked, pos_set, k))
+            results[f"MAP@{k}"].append(average_precision(ranked, pos_set, k))
+            results[f"NDCG@{k}"].append(ndcg_at_k(ranked, pos_set, k))
+
     return {k: round(np.mean(v), 4) for k, v in results.items()}
 
 
