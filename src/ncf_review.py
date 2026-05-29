@@ -122,6 +122,21 @@ class NCFReview(nn.Module):
         score = self.fusion_mlp(final_vec)
         return score.squeeze(-1)
 
+    def score_items(self, user_id, items, device=None):
+        """Score a specific list of items for a user. Returns numpy array in same order."""
+        if device is None:
+            device = next(self.parameters()).device
+        self.eval()
+        with torch.no_grad():
+            if self._cached_user_review_emb is None or self._cached_item_review_emb is None:
+                raise RuntimeError("Call set_review_embeddings() before score_items().")
+            u_rev = self._cached_user_review_emb[user_id].unsqueeze(0).expand(len(items), -1).to(device)
+            i_rev = self._cached_item_review_emb[torch.LongTensor(items)].to(device)
+            user_tensor = torch.LongTensor([user_id] * len(items)).to(device)
+            item_tensor = torch.LongTensor(items).to(device)
+            scores = self.forward(user_tensor, item_tensor, u_rev, i_rev).cpu().numpy()
+        return scores
+
     def recommend(self, user_id, n_items, k, exclude=None,
                   user_emb_tensor=None, item_emb_tensor=None, device=None):
         """Generate top-k recommendations for a user.
@@ -193,7 +208,6 @@ def train_ncf_review(model, train_pos_df, val_df, user_emb, item_emb, config, n_
         optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-5
     )
 
-    best_val_loss = float("inf")
     best_val_hitrate = 0.0
     patience_counter = 0
     patience = config["model"]["early_stop_patience"]
@@ -204,6 +218,20 @@ def train_ncf_review(model, train_pos_df, val_df, user_emb, item_emb, config, n_
     # 验证集正样本（用于计算 HitRate）
     val_pos_df = val_labeled[val_labeled["label"] == 1][["user_id", "item_id"]].copy()
     val_users_items = val_pos_df.groupby("user_id")["item_id"].apply(set).to_dict()
+
+    # Pre-sample validation candidates once (fixed seed → comparable across epochs)
+    n_neg = 99
+    val_rng = np.random.default_rng(base_seed + 7777)
+    val_candidates = {}  # uid -> (candidates_list, relevant_set)
+    for uid, relevant_items in val_users_items.items():
+        train_set = set(train_pos_df[train_pos_df["user_id"] == uid]["item_id"].values)
+        pos = list(relevant_items)
+        seen = train_set | relevant_items
+        pool = [i for i in range(n_items) if i not in seen]
+        neg = val_rng.choice(pool, size=min(n_neg, len(pool)), replace=False).tolist()
+        candidates = neg + pos
+        val_rng.shuffle(candidates)
+        val_candidates[uid] = (candidates, relevant_items)
 
     if not resample:
         static_train = sample_train_negatives(
@@ -270,17 +298,15 @@ def train_ncf_review(model, train_pos_df, val_df, user_emb, item_emb, config, n_
                 val_n += len(labels)
         val_loss = val_total_loss / val_n if val_n > 0 else float("inf")
 
-        # 计算 HitRate@10（ranking 指标，比 BCELoss 更可靠）
+        # Sampled HitRate@10 — fixed candidates across epochs for comparability
         val_hitrate = 0.0
         val_k = 10
-        for uid, relevant_items in val_users_items.items():
-            train_items = set(
-                train_pos_df[train_pos_df["user_id"] == uid]["item_id"].values
-            )
-            recs = model.recommend(uid, n_items, val_k, exclude=train_items)
-            if any(r in relevant_items for r in recs):
+        for uid, (candidates, relevant_items) in val_candidates.items():
+            scores = model.score_items(uid, candidates, device=device)
+            top = [candidates[i] for i in np.argsort(scores)[::-1][:val_k]]
+            if any(item in relevant_items for item in top):
                 val_hitrate += 1.0
-        val_hitrate /= len(val_users_items) if val_users_items else 1.0
+        val_hitrate /= len(val_candidates) if val_candidates else 1.0
 
         epoch_iter.set_postfix(
             train_loss=f"{avg_loss:.4f}",
@@ -295,19 +321,15 @@ def train_ncf_review(model, train_pos_df, val_df, user_emb, item_emb, config, n_
 
         scheduler.step(val_loss)
 
-        # 用 HitRate 做早停（ranking 指标比 pointwise loss 更可靠）
         if val_hitrate > best_val_hitrate:
             best_val_hitrate = val_hitrate
-            best_val_loss = val_loss
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             patience_counter = 0
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                current_lr = optimizer.param_groups[0]["lr"]
-                if current_lr <= scheduler.min_lrs[0]:
-                    tqdm.write(f"    Early stopping at epoch {epoch + 1} (best HitRate@10={best_val_hitrate:.4f})")
-                    break
+                tqdm.write(f"    Early stopping at epoch {epoch + 1} (best HitRate@10={best_val_hitrate:.4f})")
+                break
 
     if best_state:
         model.load_state_dict(best_state)
