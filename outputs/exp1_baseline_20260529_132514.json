@@ -1,0 +1,53 @@
+{
+  "Popularity": {
+    "Precision@5": 0.0008,
+    "Recall@5": 0.0042,
+    "HitRate@5": 0.0042,
+    "MAP@5": 0.0019,
+    "NDCG@5": 0.0025,
+    "Precision@10": 0.0009,
+    "Recall@10": 0.0093,
+    "HitRate@10": 0.0093,
+    "MAP@10": 0.0026,
+    "NDCG@10": 0.0041,
+    "Precision@20": 0.0009,
+    "Recall@20": 0.0173,
+    "HitRate@20": 0.0173,
+    "MAP@20": 0.0032,
+    "NDCG@20": 0.0062
+  },
+  "UserCF": {
+    "Precision@5": 0.0021,
+    "Recall@5": 0.0107,
+    "HitRate@5": 0.0107,
+    "MAP@5": 0.0056,
+    "NDCG@5": 0.0069,
+    "Precision@10": 0.0019,
+    "Recall@10": 0.0193,
+    "HitRate@10": 0.0193,
+    "MAP@10": 0.0067,
+    "NDCG@10": 0.0096,
+    "Precision@20": 0.0017,
+    "Recall@20": 0.033,
+    "HitRate@20": 0.033,
+    "MAP@20": 0.0076,
+    "NDCG@20": 0.013
+  },
+  "NCF": {
+    "Precision@5": 0.0015,
+    "Recall@5": 0.0073,
+    "HitRate@5": 0.0073,
+    "MAP@5": 0.004,
+    "NDCG@5": 0.0048,
+    "Precision@10": 0.0015,
+    "Recall@10": 0.0145,
+    "HitRate@10": 0.0145,
+    "MAP@10": 0.005,
+    "NDCG@10": 0.0071,
+    "Precision@20": 0.0013,
+    "Recall@20": 0.0264,
+    "HitRate@20": 0.0264,
+    "MAP@20": 0.0057,
+    "NDCG@20": 0.0101
+  }
+}

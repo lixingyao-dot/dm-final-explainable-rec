@@ -167,6 +167,9 @@ def train_ncf_review(model, train_pos_df, val_df, user_emb, item_emb, config, n_
     resample = config["negative_sampling"].get("resample_per_epoch", True)
     base_seed = config["seed"]
 
+    # Cache review embeddings for recommend() calls during validation
+    model.set_review_embeddings(user_emb, item_emb)
+
     if "label" in train_pos_df.columns:
         train_pos_df = train_pos_df[train_pos_df["label"] == 1][["user_id", "item_id"]]
     else:
