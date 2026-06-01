@@ -667,4 +667,22 @@ def _print_summary(total_seconds: float):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Preprocess Amazon Electronics data")
+    parser.add_argument("--users", type=int, default=None,
+                        help="Number of users to sample (default from config)")
+    parser.add_argument("--items", type=int, default=None,
+                        help="Number of items to keep (default from config)")
+    args = parser.parse_args()
+
+    if args.users:
+        CONFIG["filter"]["n_users_sample"] = args.users
+    if args.items:
+        CONFIG["filter"]["n_items_target"] = args.items
+
+    if args.users or args.items:
+        print(f"  Override: n_users_sample={CONFIG['filter']['n_users_sample']}, "
+              f"n_items_target={CONFIG['filter']['n_items_target']}")
+
     run_pipeline()

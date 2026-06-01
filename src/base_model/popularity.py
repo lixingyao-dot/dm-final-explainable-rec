@@ -22,7 +22,8 @@ class PopularityRecommender:
                     return recs
 
         # fallback: fill remaining slots with random unexcluded items
-        remaining = [i for i in range(n_items) if i not in exclude and i not in recs]
+        seen = exclude | set(recs)
+        remaining = [i for i in range(n_items) if i not in seen]
         np.random.shuffle(remaining)
         recs.extend(remaining[:k - len(recs)])
         return recs
