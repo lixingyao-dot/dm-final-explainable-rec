@@ -18,8 +18,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import CONFIG
-from src.ncf import NCF, train_ncf
-from src.ncf_review import NCFReview, train_ncf_review
+from src.ncf_models.ncf import NCF, train_ncf
+from src.ncf_models.ncf_review import NCFReview, train_ncf_review
 from src.evaluate import evaluate_model, evaluate_model_sampled, print_metrics
 
 
@@ -126,6 +126,7 @@ def main():
     metrics_r01 = _evaluate(model_r01, test_df, train_df, n_items)
     print_metrics(metrics_r01, "NCF+Review (alpha=0.1)")
     all_results["NCF+Review_alpha=0.1"] = metrics_r01
+    torch.save(model_r01.state_dict(), "outputs/models/ncf_review_a0.1.pt")
     print(f"  Time: {time.time() - t0:.1f}s")
 
     # ── 3. NCF+Review alpha=0.3 ──
@@ -141,7 +142,7 @@ def main():
         review_emb_dim=user_emb.shape[1], alpha=0.3,
     ).to(device)
 
-    review_ckpt_path = Path("outputs/models/ncf_review_best.pt")
+    review_ckpt_path = Path("outputs/models/ncf_review_a0.3.pt")
     if not args.train and review_ckpt_path.exists():
         print("  Loading pre-trained NCF+Review checkpoint ...")
         state = torch.load(review_ckpt_path, map_location=device, weights_only=True)
@@ -161,8 +162,7 @@ def main():
     metrics_r03 = _evaluate(model_r03, test_df, train_df, n_items)
     print_metrics(metrics_r03, "NCF+Review (alpha=0.3)")
     all_results["NCF+Review_alpha=0.3"] = metrics_r03
-    torch.save(model_r03.state_dict(), "outputs/models/ncf_review_best.pt")
-    print(f"  Best NCF+Review model saved to outputs/models/ncf_review_best.pt")
+    torch.save(model_r03.state_dict(), "outputs/models/ncf_review_a0.3.pt")
     print(f"  Time: {time.time() - t0:.1f}s")
 
     # ── 4. NCF+Review alpha=0.5 ──
@@ -185,6 +185,7 @@ def main():
     metrics_r05 = _evaluate(model_r05, test_df, train_df, n_items)
     print_metrics(metrics_r05, "NCF+Review (alpha=0.5)")
     all_results["NCF+Review_alpha=0.5"] = metrics_r05
+    torch.save(model_r05.state_dict(), "outputs/models/ncf_review_a0.5.pt")
     print(f"  Time: {time.time() - t0:.1f}s")
 
     # ── Summary table ──

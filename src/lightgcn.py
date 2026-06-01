@@ -197,10 +197,10 @@ def train_lightgcn(model, train_pos_df, val_df, adj_norm, config, device=None):
         loader = DataLoader(train_dataset, batch_size=config["model"]["batch_size"], shuffle=True)
 
         total_loss = 0
-        n_batches = 0
+        n_batches = len(loader)
 
         batch_iter = tqdm(loader, desc=f"  Epoch {epoch + 1}", leave=False, unit="batch")
-        for users, pos_items, neg_items in batch_iter:
+        for i, (users, pos_items, neg_items) in enumerate(batch_iter):
             users = users.to(device)
             pos_items = pos_items.to(device)
             neg_items = neg_items.to(device)
@@ -210,11 +210,10 @@ def train_lightgcn(model, train_pos_df, val_df, adj_norm, config, device=None):
             loss = bpr_loss_fn(pos_scores, neg_scores)
 
             optimizer.zero_grad()
-            loss.backward()
+            loss.backward(retain_graph=(i < n_batches - 1))
             optimizer.step()
 
             total_loss += loss.item()
-            n_batches += 1
             batch_iter.set_postfix(loss=f"{loss.item():.4f}")
 
         avg_loss = total_loss / n_batches

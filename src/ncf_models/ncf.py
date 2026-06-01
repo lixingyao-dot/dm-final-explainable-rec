@@ -1,23 +1,17 @@
-"""NCF with user/item bias terms.
-
-Key improvement over vanilla NCF:
-- user_bias: scalar per user, captures tendency to interact with many items
-- item_bias: scalar per item, captures popularity signal (what ItemCF exploits)
-- score = GMF_out + MLP_out + user_bias + item_bias
-"""
+"""Neural Collaborative Filtering (NCF) model in PyTorch."""
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from src.utils import sample_train_negatives, ensure_binary_labels
 from src.plotting import plot_training_history
 
 
-class InteractionDataset(torch.utils.data.Dataset):
+class InteractionDataset(Dataset):
     def __init__(self, df):
         self.users = torch.LongTensor(df["user_id"].values)
         self.items = torch.LongTensor(df["item_id"].values)
@@ -30,10 +24,10 @@ class InteractionDataset(torch.utils.data.Dataset):
         return self.users[idx], self.items[idx], self.labels[idx]
 
 
-class NCFBias(nn.Module):
-    """NCF + user/item bias. Same GMF+MLP fusion, plus learnable scalar biases."""
+class NCF(nn.Module):
+    """Neural Collaborative Filtering with GMF + MLP fusion."""
 
-    def __init__(self, n_users, n_items, embedding_dim=32, mlp_layers=(64, 32, 16)):
+    def __init__(self, n_users, n_items, embedding_dim=64, mlp_layers=(64, 32, 16)):
         super().__init__()
         self.n_users = n_users
         self.n_items = n_items
@@ -47,11 +41,6 @@ class NCFBias(nn.Module):
         self.user_emb_mlp = nn.Embedding(n_users, embedding_dim)
         self.item_emb_mlp = nn.Embedding(n_items, embedding_dim)
 
-        # Bias terms — explicitly capture popularity signal
-        self.user_bias = nn.Embedding(n_users, 1)
-        self.item_bias = nn.Embedding(n_items, 1)
-        self.global_bias = nn.Parameter(torch.zeros(1))
-
         # MLP layers
         mlp_input_dim = embedding_dim * 2
         layers = []
@@ -62,7 +51,7 @@ class NCFBias(nn.Module):
             mlp_input_dim = dim
         self.mlp = nn.Sequential(*layers)
 
-        # Final prediction: GMF_out + MLP_out + biases → score
+        # Final prediction
         self.output_layer = nn.Linear(mlp_layers[-1] + embedding_dim, 1)
         self.sigmoid = nn.Sigmoid()
 
@@ -75,14 +64,12 @@ class NCFBias(nn.Module):
             elif isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.zeros_(m.bias)
-        nn.init.zeros_(self.user_bias.weight)
-        nn.init.zeros_(self.item_bias.weight)
 
     def forward(self, user_ids, item_ids):
         # GMF
         u_gmf = self.user_emb_gmf(user_ids)
         i_gmf = self.item_emb_gmf(item_ids)
-        gmf_out = u_gmf * i_gmf
+        gmf_out = u_gmf * i_gmf  # element-wise product
 
         # MLP
         u_mlp = self.user_emb_mlp(user_ids)
@@ -90,12 +77,13 @@ class NCFBias(nn.Module):
         mlp_input = torch.cat([u_mlp, i_mlp], dim=-1)
         mlp_out = self.mlp(mlp_input)
 
-        # Concat + bias
+        # Concat and predict
         concat = torch.cat([gmf_out, mlp_out], dim=-1)
-        score = self.output_layer(concat) + self.user_bias(user_ids) + self.item_bias(item_ids) + self.global_bias
-        return self.sigmoid(score).squeeze(-1)
+        score = self.sigmoid(self.output_layer(concat))
+        return score.squeeze(-1)
 
     def score_items(self, user_id, items, device=None):
+        """Score a specific list of items for a user. Returns numpy array in same order."""
         if device is None:
             device = next(self.parameters()).device
         self.eval()
@@ -106,6 +94,7 @@ class NCFBias(nn.Module):
         return scores
 
     def recommend(self, user_id, n_items, k, exclude=None, device=None):
+        """Generate top-k recommendations for a user."""
         if device is None:
             device = next(self.parameters()).device
         self.eval()
@@ -122,8 +111,12 @@ class NCFBias(nn.Module):
         return top_items.tolist()
 
 
-def train_ncf_bias(model, train_pos_df, val_df, config, n_items, device=None):
-    """Train NCFBias with sampled validation and early stopping."""
+def train_ncf(model, train_pos_df, val_df, config, n_items, device=None):
+    """Train NCF model with early stopping.
+
+    train_pos_df: train.csv positives (user_id, item_id) or labeled train_neg with label=1 rows.
+    When resample_per_epoch=True, negatives are redrawn each epoch.
+    """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     neg_ratio = config["negative_sampling"]["neg_ratio"]
@@ -136,6 +129,8 @@ def train_ncf_bias(model, train_pos_df, val_df, config, n_items, device=None):
         train_pos_df = train_pos_df[["user_id", "item_id"]].copy()
 
     val_df = ensure_binary_labels(val_df)
+
+    # 为验证集采样负样本，使 val_loss 可比
     val_neg = sample_train_negatives(
         val_df[val_df["label"] == 1][["user_id", "item_id"]],
         n_items, neg_ratio=neg_ratio, seed=base_seed + 9999
@@ -159,13 +154,14 @@ def train_ncf_bias(model, train_pos_df, val_df, config, n_items, device=None):
 
     train_losses, val_losses, lr_history, val_hitrates = [], [], [], []
 
+    # 验证集正样本（用于计算 HitRate）
     val_pos_df = val_df[val_df["label"] == 1][["user_id", "item_id"]].copy()
     val_users_items = val_pos_df.groupby("user_id")["item_id"].apply(set).to_dict()
 
-    # Pre-sample validation candidates
+    # Pre-sample validation candidates once (fixed seed → comparable across epochs)
     n_neg = 99
     val_rng = np.random.default_rng(base_seed + 7777)
-    val_candidates = {}
+    val_candidates = {}  # uid -> (candidates_list, relevant_set)
     for uid, relevant_items in val_users_items.items():
         train_set = set(train_pos_df[train_pos_df["user_id"] == uid]["item_id"].values)
         pos = list(relevant_items)
@@ -181,7 +177,7 @@ def train_ncf_bias(model, train_pos_df, val_df, config, n_items, device=None):
             train_pos_df, n_items, neg_ratio=neg_ratio, seed=base_seed
         )
 
-    epoch_iter = tqdm(range(config["model"]["epochs"]), desc="NCFBias Training", unit="epoch")
+    epoch_iter = tqdm(range(config["model"]["epochs"]), desc="NCF Training", unit="epoch")
     for epoch in epoch_iter:
         if resample:
             train_data = sample_train_negatives(
@@ -203,19 +199,21 @@ def train_ncf_bias(model, train_pos_df, val_df, config, n_items, device=None):
         batch_iter = tqdm(loader, desc=f"  Epoch {epoch + 1}", leave=False, unit="batch")
         for users, items, labels in batch_iter:
             users, items, labels = users.to(device), items.to(device), labels.to(device)
+
             optimizer.zero_grad()
             preds = model(users, items)
             loss = criterion(preds, labels)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+
             total_loss += loss.item()
             n_batches += 1
             batch_iter.set_postfix(loss=f"{loss.item():.4f}")
 
         avg_loss = total_loss / n_batches
 
-        # Validation
+        # Validation loss
         model.eval()
         val_loss = 0
         val_n = 0
@@ -230,7 +228,7 @@ def train_ncf_bias(model, train_pos_df, val_df, config, n_items, device=None):
                 val_n += len(labels)
         val_loss /= val_n
 
-        # Sampled HitRate@10
+        # Sampled HitRate@10 — fixed candidates across epochs for comparability
         val_hitrate = 0.0
         val_k = 10
         for uid, (candidates, relevant_items) in val_candidates.items():
@@ -267,7 +265,7 @@ def train_ncf_bias(model, train_pos_df, val_df, config, n_items, device=None):
         model.load_state_dict(best_state)
     plot_training_history(
         train_losses, val_losses, lr_history,
-        "outputs/plots/ncf_bias_training.png",
+        "outputs/plots/ncf_training.png",
         val_hitrates=val_hitrates
     )
     return model

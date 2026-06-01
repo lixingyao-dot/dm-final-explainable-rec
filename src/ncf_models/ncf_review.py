@@ -333,9 +333,10 @@ def train_ncf_review(model, train_pos_df, val_df, user_emb, item_emb, config, n_
 
     if best_state:
         model.load_state_dict(best_state)
+    alpha = model.alpha
     plot_training_history(
         train_losses, val_losses, lr_history,
-        "outputs/plots/ncf_review_training.png",
+        f"outputs/plots/ncf_review_a{alpha:.1f}.png",
         val_hitrates=val_hitrates
     )
     return model

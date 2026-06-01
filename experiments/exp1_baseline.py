@@ -16,7 +16,7 @@ from config import CONFIG
 from src.base_model.itemcf import ItemCF
 from src.base_model.popularity import PopularityRecommender
 from src.base_model.usercf import UserCF
-from src.ncf import NCF, train_ncf
+from src.ncf_models.ncf import NCF, train_ncf
 from src.evaluate import evaluate_model, evaluate_model_sampled, print_metrics
 
 
