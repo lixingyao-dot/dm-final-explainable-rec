@@ -81,7 +81,8 @@ def main():
     print(f"  Best NCF saved to: outputs/models/ncf_best.pt")
 
     # Save best NCF to the standard checkpoint path
-    torch.save(torch.load(f"outputs/models/ncf_dim={best['params']['dim']}_lr={best['params']['lr']}.pt",
+    best_label = f"dim={best['params']['dim']}_lr={best['params']['lr']}".replace('=', '')
+    torch.save(torch.load(f"outputs/models/ncf_{best_label}.pt",
                           map_location="cpu", weights_only=True),
                "outputs/models/ncf_best.pt")
 
