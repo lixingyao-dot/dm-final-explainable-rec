@@ -24,7 +24,7 @@ zhx  实验0 实验1 实验1b 实验2 实验3
 gy 实验0 实验1 实验4 实验5
 
 小数据集
-运行python src/preprocess.py --users 20000 --items 10000
+python src/preprocess.py --users 5000 --items 3000
 zyh 实验0 实验1 实验1b 实验2 实验3 
 ygc 实验0 实验1 实验4 实验5
 
