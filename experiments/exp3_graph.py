@@ -156,7 +156,8 @@ def main():
     print("  EXPERIMENT 3: GRAPH MODEL COMPARISON SUMMARY")
     print("=" * 60)
 
-    k_values = sorted(set(int(k.split("@")[1]) for k in all_results["NCF"].keys()))
+    first_key = next(iter(all_results.keys()))
+    k_values = sorted(set(int(k.split("@")[1]) for k in all_results[first_key].keys()))
     for metric in ["HitRate", "NDCG"]:
         print(f"\n  {metric}:")
         header = f"  {'Model':<15}" + "".join(f"{'@' + str(k):<12}" for k in k_values)
