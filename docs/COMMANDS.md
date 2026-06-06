@@ -3,6 +3,7 @@
 下载下面包即可
 pip install sentence-transformers shap streamlit plotly wordcloud nltk packaging transformers -i https://pypi.tuna.tsinghua.edu.cn/simple
 
+pip uninstall sentence-transformers -y && pip install sentence-transformers transformers==4.41.2 -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 
 ## 预处理
