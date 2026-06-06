@@ -2,16 +2,7 @@
 
 import numpy as np
 from scipy.sparse import csr_matrix
-
-
-def _cosine_similarity_sparse(mat):
-    """Return cosine similarity for a sparse matrix without sklearn dependency."""
-    # mat shape: (n_vectors, n_features)
-    dot = mat @ mat.T
-    norms = np.sqrt(mat.multiply(mat).sum(axis=1)).A1
-    denom = np.outer(norms, norms)
-    denom[denom == 0] = 1.0
-    return dot.multiply(1.0 / denom)
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 class ItemCF:
@@ -33,7 +24,7 @@ class ItemCF:
     def _build_similarity(self):
         """Compute cosine similarity between items (column-wise)."""
         item_user = self.user_item.T.tocsr()  # (n_items, n_users)
-        self.similarities = _cosine_similarity_sparse(item_user).tocsr()  # sparse
+        self.similarities = cosine_similarity(item_user, dense_output=False).tocsr()
 
     def recommend(self, user_id, n_items, k, exclude=None):
         exclude = exclude or set()
