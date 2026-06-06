@@ -43,22 +43,23 @@ def main():
 
     # ── NCF ──
     print("\n  Loading NCF checkpoint ...")
+    ckpt = Path("outputs/models/ncf_best.pt")
+    ckpt_state = torch.load(ckpt, map_location=device, weights_only=True)
+    ckpt_dim = ckpt_state["user_emb_gmf.weight"].shape[1]
+    print(f"  Checkpoint embedding_dim={ckpt_dim}")
     ncf = NCF(
         n_users=n_users, n_items=n_items,
-        embedding_dim=CONFIG["model"]["embedding_dim"],
+        embedding_dim=ckpt_dim,
         mlp_layers=CONFIG["model"]["ncf_mlp_layers"],
     ).to(device)
-
-    ckpt = Path("outputs/models/ncf_best.pt")
-    state = torch.load(ckpt, map_location=device, weights_only=True)
     for name, param in ncf.named_parameters():
-        if name in state and state[name].shape != param.shape:
-            old_shape = state[name].shape
+        if name in ckpt_state and ckpt_state[name].shape != param.shape:
+            old_shape = ckpt_state[name].shape
             new = torch.zeros_like(param)
             slices = tuple(slice(0, min(o, n)) for o, n in zip(old_shape, param.shape))
-            new[slices] = state[name][slices]
-            state[name] = new
-    ncf.load_state_dict(state)
+            new[slices] = ckpt_state[name][slices]
+            ckpt_state[name] = new
+    ncf.load_state_dict(ckpt_state)
     ncf.eval()
 
     m = evaluate_model_sampled(ncf, test_df, train_df, n_items)

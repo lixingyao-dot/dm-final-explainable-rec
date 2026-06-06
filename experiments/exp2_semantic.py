@@ -77,16 +77,17 @@ def main():
     print("=" * 60)
     t0 = time.time()
 
-    ncf_model = NCF(
-        n_users=n_users, n_items=n_items,
-        embedding_dim=CONFIG["model"]["embedding_dim"],
-        mlp_layers=CONFIG["model"]["ncf_mlp_layers"],
-    ).to(device)
-
     ckpt_path = Path("outputs/models/ncf_best.pt")
     if not args.train and ckpt_path.exists():
         print("  Loading pre-trained NCF checkpoint ...")
         state = torch.load(ckpt_path, map_location=device, weights_only=True)
+        ckpt_dim = state["user_emb_gmf.weight"].shape[1]
+        print(f"  Checkpoint embedding_dim={ckpt_dim}")
+        ncf_model = NCF(
+            n_users=n_users, n_items=n_items,
+            embedding_dim=ckpt_dim,
+            mlp_layers=CONFIG["model"]["ncf_mlp_layers"],
+        ).to(device)
         for name, param in ncf_model.named_parameters():
             if name in state and state[name].shape != param.shape:
                 old_shape = state[name].shape
@@ -96,6 +97,11 @@ def main():
                 state[name] = new
         ncf_model.load_state_dict(state)
     else:
+        ncf_model = NCF(
+            n_users=n_users, n_items=n_items,
+            embedding_dim=CONFIG["model"]["embedding_dim"],
+            mlp_layers=CONFIG["model"]["ncf_mlp_layers"],
+        ).to(device)
         ncf_model = train_ncf(ncf_model, train_df, val_df, CONFIG, n_items=n_items, device=device)
 
     ncf_metrics = _evaluate(ncf_model, test_df, train_df, n_items)
