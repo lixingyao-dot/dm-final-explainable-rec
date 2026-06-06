@@ -2,7 +2,14 @@
 
 import numpy as np
 from scipy.sparse import csr_matrix
-from sklearn.metrics.pairwise import cosine_similarity
+
+
+def _cosine_similarity_sparse(mat):
+    dot = mat @ mat.T
+    norms = np.sqrt(mat.multiply(mat).sum(axis=1)).A1
+    denom = np.outer(norms, norms)
+    denom[denom == 0] = 1.0
+    return dot.multiply(1.0 / denom)
 
 
 class UserCF:
@@ -25,8 +32,7 @@ class UserCF:
 
     def _build_similarity(self):
         """Compute cosine similarity between all users."""
-        sim = cosine_similarity(self.user_item, dense_output=False)
-        self.similarities = sim  # (n_users, n_users), sparse
+        self.similarities = _cosine_similarity_sparse(self.user_item).tocsr()  # sparse
 
     def recommend(self, user_id, n_items, k, exclude=None):
         """Recommend k items based on similar users' interactions."""

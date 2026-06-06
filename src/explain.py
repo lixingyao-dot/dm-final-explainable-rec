@@ -174,7 +174,81 @@ class SHAPExplainer:
         return score
 
 
-def load_explainers(data_dir="data/processed"):
+class TemporalExplainer:
+    """Explain recommendations using recency and candidate-specific similarity."""
+
+    def __init__(self, train_df, decay_lambda=2.0, itemcf_model=None):
+        from src.temporal import compute_time_weights
+
+        self.decay_lambda = decay_lambda
+        self.itemcf_model = itemcf_model
+        self.train_df = train_df.copy()
+        if "time_weight" not in self.train_df.columns:
+            self.train_df = compute_time_weights(self.train_df, decay_lambda=decay_lambda)
+
+    def _item_similarity(self, reference_item, history_item):
+        if self.itemcf_model is None:
+            return 0.0
+        if reference_item is None or history_item is None:
+            return 0.0
+        if reference_item >= self.itemcf_model.n_items or history_item >= self.itemcf_model.n_items:
+            return 0.0
+        sim_row = self.itemcf_model.similarities[reference_item]
+        return float(sim_row[0, history_item]) if sim_row.shape[1] > history_item else 0.0
+
+    def explain(self, user_id, item_id, k=5):
+        user_hist = self.train_df[self.train_df["user_id"] == user_id].copy()
+        if user_hist.empty:
+            return {
+                "recommended_item": int(item_id) if item_id is not None else None,
+                "top_weighted_items": [],
+                "explanation": "No historical interactions found for this user.",
+            }
+
+        max_ts = float(user_hist["timestamp"].max()) if "timestamp" in user_hist.columns else None
+        scored_rows = []
+        for row in user_hist.itertuples(index=False):
+            days_ago = None
+            if max_ts is not None and getattr(row, "timestamp", None) is not None:
+                days_ago = round((max_ts - float(row.timestamp)) / 86400.0, 2)
+            recency_weight = float(row.time_weight)
+            sim = self._item_similarity(item_id, int(row.item_id))
+            combined = recency_weight + (2.0 * sim)
+            scored_rows.append(
+                {
+                    "item_id": int(row.item_id),
+                    "days_ago": days_ago,
+                    "weight": round(recency_weight, 4),
+                    "similarity_to_candidate": round(sim, 4),
+                    "combined_score": round(combined, 4),
+                }
+            )
+
+        scored_rows.sort(key=lambda x: (x["combined_score"], x["weight"]), reverse=True)
+        top_items = scored_rows[:k]
+
+        if item_id is None:
+            explanation = "Recommended mainly from recent behavior: " + ", ".join(
+                f"{x['item_id']} ({x['weight']})" for x in top_items
+            )
+        else:
+            explanation = (
+                f"For item {int(item_id)}, the recommendation mainly comes from recent behavior "
+                f"and candidate-specific similarity: "
+                + ", ".join(
+                    f"{x['item_id']} (recent={x['weight']}, sim={x['similarity_to_candidate']})"
+                    for x in top_items
+                )
+            )
+
+        return {
+            "recommended_item": int(item_id) if item_id is not None else None,
+            "top_weighted_items": top_items,
+            "explanation": explanation,
+        }
+
+
+def load_explainers(data_dir="data/processed", train_df=None):
     """Load all explanation modules."""
     data_path = Path(data_dir)
 
@@ -185,8 +259,10 @@ def load_explainers(data_dir="data/processed"):
 
     keyword_explainer = KeywordExplainer(user_reviews, item_reviews)
     similar_user_explainer = SimilarUserExplainer()
+    temporal_explainer = TemporalExplainer(train_df) if train_df is not None else None
 
     return {
         "keyword": keyword_explainer,
         "similar_user": similar_user_explainer,
+        "temporal": temporal_explainer,
     }

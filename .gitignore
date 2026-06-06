@@ -41,3 +41,5 @@ desktop.ini
 # Jupyter
 .ipynb_checkpoints/
 .vscode/
+
+outputs/
