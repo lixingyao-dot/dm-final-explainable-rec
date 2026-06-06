@@ -24,8 +24,7 @@ class ItemCF:
     def _build_similarity(self):
         """Compute cosine similarity between items (column-wise)."""
         item_user = self.user_item.T.tocsr()  # (n_items, n_users)
-        sim = cosine_similarity(item_user, dense_output=False)
-        self.similarities = sim  # (n_items, n_items), sparse
+        self.similarities = cosine_similarity(item_user, dense_output=False).tocsr()
 
     def recommend(self, user_id, n_items, k, exclude=None):
         exclude = exclude or set()
@@ -61,3 +60,54 @@ class ItemCF:
 
         top_items = np.argsort(scores)[::-1][:k]
         return [int(i) for i in top_items]
+
+    def explain(self, user_id, item_id, k=5):
+        """Explain a recommendation using similar historical items."""
+        if user_id >= self.n_users or item_id >= self.n_items:
+            return {
+                "recommended_item": int(item_id),
+                "bridge_items": [],
+                "explanation": "Not enough user or item history to explain this recommendation.",
+            }
+
+        user_row = self.user_item[user_id].toarray().ravel()
+        interacted = np.where(user_row > 0)[0]
+        if len(interacted) == 0:
+            return {
+                "recommended_item": int(item_id),
+                "bridge_items": [],
+                "explanation": "No user history found for explanation.",
+            }
+
+        item_sims = self.similarities[item_id].toarray().ravel()
+        bridge_items = []
+        for hist_item in interacted:
+            if hist_item == item_id:
+                continue
+            bridge_items.append(
+                {
+                    "item_id": int(hist_item),
+                    "similarity": float(item_sims[hist_item]) if hist_item < len(item_sims) else 0.0,
+                    "similarity_to_recommended": float(item_sims[hist_item]) if hist_item < len(item_sims) else 0.0,
+                }
+            )
+
+        bridge_items.sort(key=lambda x: x["similarity"], reverse=True)
+        bridge_items = bridge_items[:k]
+
+        if bridge_items:
+            bridge_desc = ", ".join(
+                f"{x['item_id']} (sim={x['similarity_to_recommended']:.4f})" for x in bridge_items
+            )
+            explanation = (
+                f"Recommended because you interacted with {bridge_desc}, "
+                f"which are similar to item {item_id}."
+            )
+        else:
+            explanation = f"Recommended because item {item_id} is similar to your history."
+
+        return {
+            "recommended_item": int(item_id),
+            "bridge_items": bridge_items,
+            "explanation": explanation,
+        }

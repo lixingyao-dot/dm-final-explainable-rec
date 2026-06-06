@@ -25,8 +25,7 @@ class UserCF:
 
     def _build_similarity(self):
         """Compute cosine similarity between all users."""
-        sim = cosine_similarity(self.user_item, dense_output=False)
-        self.similarities = sim  # (n_users, n_users), sparse
+        self.similarities = cosine_similarity(self.user_item, dense_output=False).tocsr()
 
     def recommend(self, user_id, n_items, k, exclude=None):
         """Recommend k items based on similar users' interactions."""
