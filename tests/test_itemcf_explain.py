@@ -17,5 +17,6 @@ def test_itemcf_explain_returns_bridge_items_and_text():
     assert result["recommended_item"] == 2
     assert len(result["bridge_items"]) <= 2
     assert result["bridge_items"]
-    assert "similarity_to_recommended" in result["bridge_items"][0]
-    assert "explanation" in result
+    assert "item_id" in result["bridge_items"][0]
+    assert "similarity" in result["bridge_items"][0]
+    assert "推荐该商品" in result["explanation"]

@@ -45,6 +45,7 @@ def test_build_explanations_writes_json():
             model_dir=model_dir,
             output_path=out,
             max_users=1,
+            recommender_type="best",
         )
 
         assert out.exists()

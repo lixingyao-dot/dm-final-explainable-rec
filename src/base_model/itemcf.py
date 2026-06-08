@@ -88,7 +88,6 @@ class ItemCF:
                 {
                     "item_id": int(hist_item),
                     "similarity": float(item_sims[hist_item]) if hist_item < len(item_sims) else 0.0,
-                    "similarity_to_recommended": float(item_sims[hist_item]) if hist_item < len(item_sims) else 0.0,
                 }
             )
 
@@ -96,15 +95,15 @@ class ItemCF:
         bridge_items = bridge_items[:k]
 
         if bridge_items:
-            bridge_desc = ", ".join(
-                f"{x['item_id']} (sim={x['similarity_to_recommended']:.4f})" for x in bridge_items
+            bridge_desc = "、".join(
+                f"{x['item_id']}(相似度={x['similarity']:.2f})" for x in bridge_items
             )
             explanation = (
-                f"Recommended because you interacted with {bridge_desc}, "
-                f"which are similar to item {item_id}."
+                f"推荐该商品是因为你购买过 {bridge_desc}，"
+                f"而购买这些商品的用户通常也购买 {item_id}。"
             )
         else:
-            explanation = f"Recommended because item {item_id} is similar to your history."
+            explanation = f"推荐该商品是因为它与你的历史购买记录相似。"
 
         return {
             "recommended_item": int(item_id),
