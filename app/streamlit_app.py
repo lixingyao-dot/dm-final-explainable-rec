@@ -16,6 +16,71 @@ from src.explain import TemporalExplainer
 from src.model_loading import load_bpr_model, load_ncf_model
 
 
+# ── Metadata helpers ──
+
+def _load_id_maps(data_dir):
+    """Load item_map.json and user_map.json, return reverse mappings."""
+    data_path = Path(data_dir)
+    item_id_to_asin = {}
+    user_id_to_name = {}
+
+    item_map_path = data_path / "item_map.json"
+    if item_map_path.exists():
+        with open(item_map_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        item_id_to_asin = {int(v): k for k, v in raw.items()}
+
+    user_map_path = data_path / "user_map.json"
+    if user_map_path.exists():
+        with open(user_map_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        user_id_to_name = {int(v): k for k, v in raw.items()}
+
+    return item_id_to_asin, user_id_to_name
+
+
+def _load_item_reviews(data_dir):
+    """Load item_reviews.json for item descriptions."""
+    path = Path(data_dir) / "item_reviews.json"
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _item_display_name(item_id, item_id_to_asin):
+    asin = item_id_to_asin.get(item_id, "未知")
+    return f"{asin} (ID:{item_id})"
+
+
+def _user_display_name(user_id, user_id_to_name):
+    name = user_id_to_name.get(user_id, "未知用户")
+    return f"{name} (ID:{user_id})"
+
+
+def _item_image_url(item_id, item_id_to_asin):
+    asin = item_id_to_asin.get(item_id)
+    if asin:
+        return f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SCLZZZZZZZ_SX200_.jpg"
+    return None
+
+
+def _item_amazon_url(item_id, item_id_to_asin):
+    asin = item_id_to_asin.get(item_id)
+    if asin:
+        return f"https://www.amazon.com/dp/{asin}"
+    return None
+
+
+def _item_description(item_id, item_reviews, max_chars=150):
+    text = item_reviews.get(str(item_id), "")
+    if not text:
+        return "暂无评论摘要"
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
+
+
 def _latest_file(path: Path, pattern: str):
     files = sorted(path.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
     return files[0] if files else None
@@ -211,6 +276,10 @@ def load_app_data(data_dir, model_dir, recommender_label=None):
     recommender = load_recommender_from_option(selected_option)
     temporal_explainer = TemporalExplainer(train_df, itemcf_model=itemcf)
 
+    # Load metadata for display
+    item_id_to_asin, user_id_to_name = _load_id_maps(data_path)
+    item_reviews = _load_item_reviews(data_path)
+
     return {
         "train_df": train_df,
         "test_df": test_df,
@@ -221,6 +290,9 @@ def load_app_data(data_dir, model_dir, recommender_label=None):
         "recommender_checkpoint": selected_option["checkpoint"],
         "available_recommenders": recommender_options,
         "temporal_explainer": temporal_explainer,
+        "item_id_to_asin": item_id_to_asin,
+        "user_id_to_name": user_id_to_name,
+        "item_reviews": item_reviews,
         "data_dir": str(data_path),
         "model_dir": str(model_path),
     }
@@ -254,11 +326,127 @@ def _build_user_bundle(data, user_id):
     return bundle
 
 
+CARD_CSS = """
+<style>
+.rec-card {
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    transition: box-shadow 0.2s;
+}
+.rec-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.rec-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+.rec-img {
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #eee;
+    background: #f8f8f8;
+}
+.rec-title {
+    font-size: 1.1em;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin: 0 0 4px 0;
+}
+.rec-score {
+    display: inline-block;
+    background: #e8f5e9;
+    color: #2e7d32;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+.rec-desc {
+    background: #f5f7fa;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 8px 0;
+    font-size: 0.9em;
+    color: #444;
+    line-height: 1.5;
+}
+.rec-exp-label {
+    font-weight: 600;
+    color: #1565c0;
+    margin-top: 10px;
+    margin-bottom: 4px;
+}
+.rec-link {
+    display: inline-block;
+    margin-top: 8px;
+    color: #1976d2;
+    text-decoration: none;
+    font-size: 0.88em;
+}
+.rec-link:hover { text-decoration: underline; }
+</style>
+"""
+
+
+def _render_rec_card(entry, data):
+    """Render a single recommendation card using HTML/CSS."""
+    import streamlit as st
+
+    item_id = entry["item_id"]
+    item_id_to_asin = data["item_id_to_asin"]
+    item_reviews = data["item_reviews"]
+
+    display_name = _item_display_name(item_id, item_id_to_asin)
+    img_url = _item_image_url(item_id, item_id_to_asin)
+    amazon_url = _item_amazon_url(item_id, item_id_to_asin)
+    desc = _item_description(item_id, item_reviews, max_chars=200)
+
+    if img_url:
+        img_html = (
+            f'<img src="{img_url}" class="rec-img" '
+            f'onerror="this.onerror=null;this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><rect fill=%22%23f0f0f0%22 width=%22100%22 height=%22100%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23999%22 font-size=%2212%22>无图片</text></svg>\';">'
+        )
+    else:
+        img_html = '<div class="rec-img" style="display:flex;align-items:center;justify-content:center;background:#f0f0f0;color:#999;font-size:12px;">无图片</div>'
+    link_html = (
+        f'<a href="{amazon_url}" target="_blank" class="rec-link">在 Amazon 查看 &rarr;</a>'
+        if amazon_url else ""
+    )
+
+    html = f"""
+    <div class="rec-card">
+        <div class="rec-header">
+            {img_html}
+            <div>
+                <p class="rec-title">{display_name}</p>
+                <span class="rec-score">推荐分数: {entry['score']:.4f}</span>
+            </div>
+        </div>
+        <div class="rec-desc">{desc}</div>
+        <p class="rec-exp-label">协同推理</p>
+        <p style="margin:0 0 4px 0; font-size:0.92em; color:#333;">{entry['itemcf']['explanation']}</p>
+        <p class="rec-exp-label">时序归因</p>
+        <p style="margin:0; font-size:0.92em; color:#333;">{entry['temporal']['explanation']}</p>
+        {link_html}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def main():
     import streamlit as st
     import plotly.express as px
 
     st.set_page_config(page_title="可解释推荐系统", layout="wide")
+    st.markdown(CARD_CSS, unsafe_allow_html=True)
     st.title("可解释推荐系统")
 
     recommender_options = discover_recommender_options("outputs/models")
@@ -276,16 +464,15 @@ def main():
         return
 
     user_id = st.sidebar.selectbox("用户ID", test_users, index=0)
+    user_display = _user_display_name(int(user_id), data["user_id_to_name"])
     user_bundle = _build_user_bundle(data, int(user_id))
 
-    tab_rec, tab_model, tab_temporal = st.tabs(["推荐解释", "模型对比", "时序分析"])
+    tab_rec, tab_model, tab_temporal = st.tabs(["推荐解释", "模型对比", "时序衰减分析"])
 
     with tab_rec:
-        st.subheader(f"用户 {user_id} 的推荐结果")
-        for entry in user_bundle[:5]:
-            with st.expander(f"物品 {entry['item_id']}  分数={entry['score']:.4f}"):
-                st.markdown(f"**ItemCF：** {entry['itemcf']['explanation']}")
-                st.markdown(f"**Temporal：** {entry['temporal']['explanation']}")
+        st.subheader(f"用户 {user_display} 的推荐结果")
+        for entry in user_bundle[:10]:
+            _render_rec_card(entry, data)
 
     with tab_model:
         st.subheader("模型对比")
@@ -302,11 +489,30 @@ def main():
                 labels={"value": "指标值", "model": "模型", "variable": "指标"},
             )
             st.plotly_chart(fig, use_container_width=True)
+
+            # Highlight best model and ItemCF baseline
+            best_row = compare_df.loc[compare_df["HitRate@10"].idxmax()]
+            best_model = best_row["model"]
+            best_hr = best_row["HitRate@10"]
+            itemcf_row = compare_df[compare_df["model"] == "ItemCF"]
+            if not itemcf_row.empty:
+                itemcf_hr = itemcf_row.iloc[0]["HitRate@10"]
+                if itemcf_hr > 0:
+                    improvement = (best_hr - itemcf_hr) / itemcf_hr * 100
+                    st.success(
+                        f"**最佳模型：{best_model}** (HitRate@10={best_hr:.3f})，"
+                        f"相比 ItemCF 可解释基线 (HitRate@10={itemcf_hr:.3f}) 提升 {improvement:.1f}%"
+                    )
+            else:
+                st.success(f"**最佳模型：{best_model}** (HitRate@10={best_hr:.3f})")
+
+            if not itemcf_row.empty:
+                st.info("**ItemCF** 作为可解释基线，虽然准确率略低，但每条推荐均可提供「因为买过 X、Y 的人也买了这个」的协同推理解释。")
         except Exception as exc:
             st.error(f"模型对比数据加载失败：{exc}")
 
     with tab_temporal:
-        st.subheader("时序解释")
+        st.subheader("时序衰减分析")
         try:
             curve_df, curve_meta = load_temporal_analysis_data("outputs")
             st.caption(

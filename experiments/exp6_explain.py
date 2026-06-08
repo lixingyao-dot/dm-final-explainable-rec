@@ -21,21 +21,26 @@ def _load_processed_data(data_dir: Path):
     return train_df, test_df, stats
 
 
-def _rank_user_items(recommender, user_id, n_items, exclude=None, top_k=10):
+def _rank_user_items(recommender, user_id, n_items, exclude=None, top_k=1):
     """Return top-k items with scores for one user."""
     exclude = exclude or set()
-    candidate_items = [i for i in range(n_items) if i not in exclude]
-    if not candidate_items:
-        return []
-    scores = recommender.score_items(int(user_id), candidate_items)
-    order = scores.argsort()[::-1][:top_k]
-    return [
-        {
-            "item_id": int(candidate_items[idx]),
-            "score": float(scores[idx]),
-        }
-        for idx in order
-    ]
+    if hasattr(recommender, "score_items"):
+        candidate_items = [i for i in range(n_items) if i not in exclude]
+        if not candidate_items:
+            return []
+        scores = recommender.score_items(int(user_id), candidate_items)
+        order = scores.argsort()[::-1][:top_k]
+        return [
+            {
+                "item_id": int(candidate_items[idx]),
+                "score": float(scores[idx]),
+            }
+            for idx in order
+        ]
+    else:
+        # ItemCF etc. that only have recommend()
+        rec_ids = recommender.recommend(int(user_id), n_items, k=top_k, exclude=exclude)
+        return [{"item_id": int(iid), "score": 0.0} for iid in rec_ids]
 
 
 def build_explanations(
@@ -43,8 +48,14 @@ def build_explanations(
     model_dir="outputs/models",
     output_path="outputs/exp6_explanations.json",
     max_users=None,
+    recommender_type="itemcf",
 ):
-    """Generate recommendation explanations for users in the processed test set."""
+    """Generate recommendation explanations for users in the processed test set.
+
+    Args:
+        recommender_type: "itemcf" to use ItemCF for recommending (default),
+                          "best" to use the best available model (NCF etc.)
+    """
     data_path = Path(data_dir)
     model_path = Path(model_dir)
     output_path = Path(output_path)
@@ -53,8 +64,15 @@ def build_explanations(
     n_users = int(stats["n_users"])
     n_items = int(stats["n_items"])
 
-    recommender, recommender_ckpt = load_best_recommender(model_path)
     itemcf = ItemCF(train_df, n_users=n_users, n_items=n_items)
+
+    if recommender_type == "itemcf":
+        recommender = itemcf
+        recommender_ckpt = "N/A (ItemCF)"
+        recommender_class = "ItemCF"
+    else:
+        recommender, recommender_ckpt = load_best_recommender(model_path)
+        recommender_class = recommender.__class__.__name__
     temporal_explainer = TemporalExplainer(train_df, itemcf_model=itemcf)
 
     train_items_per_user = train_df.groupby("user_id")["item_id"].apply(set).to_dict()
@@ -71,7 +89,7 @@ def build_explanations(
             int(user_id),
             n_items=n_items,
             exclude=user_exclude,
-            top_k=10,
+            top_k=1,
         )
         top_rec = recommendations[0] if recommendations else None
         recommended_item = int(top_rec["item_id"]) if top_rec else None
@@ -106,7 +124,7 @@ def build_explanations(
         "n_items": n_items,
         "model_dir": str(model_path),
         "recommender_checkpoint": str(recommender_ckpt),
-        "recommender_class": recommender.__class__.__name__,
+        "recommender_class": recommender_class,
         "recommendations": results[0]["recommendations"] if results else [],
         "results": results,
     }
@@ -121,7 +139,7 @@ def build_explanations(
         "output_path": str(output_path),
         "model_dir": str(model_path),
         "recommender_checkpoint": str(recommender_ckpt),
-        "recommender_class": recommender.__class__.__name__,
+        "recommender_class": recommender_class,
         "recommendations": results[0]["recommendations"] if results else [],
     }
 

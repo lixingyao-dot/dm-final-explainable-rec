@@ -21,5 +21,5 @@ def test_temporal_explainer_changes_with_reference_item():
     assert len(result_a["top_weighted_items"]) == 2
     assert len(result_b["top_weighted_items"]) == 2
     assert result_a["top_weighted_items"][0]["item_id"] != result_b["top_weighted_items"][0]["item_id"]
-    assert "for item 2" in result_a["explanation"].lower()
-    assert "for item 3" in result_b["explanation"].lower()
+    assert "推荐商品 2" in result_a["explanation"]
+    assert "推荐商品 3" in result_b["explanation"]

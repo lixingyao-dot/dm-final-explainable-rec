@@ -218,25 +218,24 @@ class TemporalExplainer:
                 {
                     "item_id": int(row.item_id),
                     "days_ago": days_ago,
-                    "weight": round(recency_weight, 4),
+                    "recency_weight": round(recency_weight, 4),
                     "similarity_to_candidate": round(sim, 4),
                     "combined_score": round(combined, 4),
                 }
             )
 
-        scored_rows.sort(key=lambda x: (x["combined_score"], x["weight"]), reverse=True)
+        scored_rows.sort(key=lambda x: x["combined_score"], reverse=True)
         top_items = scored_rows[:k]
 
         if item_id is None:
-            explanation = "Recommended mainly from recent behavior: " + ", ".join(
-                f"{x['item_id']} ({x['weight']})" for x in top_items
+            explanation = "推荐主要参考最近行为：" + " > ".join(
+                f"{x['item_id']}(权重={x['recency_weight']:.2f})" for x in top_items
             )
         else:
             explanation = (
-                f"For item {int(item_id)}, the recommendation mainly comes from recent behavior "
-                f"and candidate-specific similarity: "
-                + ", ".join(
-                    f"{x['item_id']} (recent={x['weight']}, sim={x['similarity_to_candidate']})"
+                f"推荐商品 {int(item_id)} 主要基于近期行为与物品相似度的综合归因："
+                + " > ".join(
+                    f"{x['item_id']}(近期={x['recency_weight']:.2f}, 相似={x['similarity_to_candidate']:.2f})"
                     for x in top_items
                 )
             )

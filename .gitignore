@@ -43,3 +43,7 @@ desktop.ini
 .vscode/
 
 outputs/
+
+explainability_plan.md
+
+.claude/
