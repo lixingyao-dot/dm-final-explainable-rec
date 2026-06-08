@@ -9,11 +9,32 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+import numpy as np
 import pandas as pd
 
 from src.base_model.itemcf import ItemCF
+from src.base_model.popularity import PopularityRecommender
+from src.base_model.ta_itemcf import TAItemCF
+from src.base_model.usercf import UserCF
 from src.explain import TemporalExplainer
 from src.model_loading import load_bpr_model, load_ncf_model
+
+
+class BaseRecommenderWrapper:
+    """Wraps base models (no score_items) to match NCF's score_items interface."""
+
+    def __init__(self, model, n_items):
+        self._model = model
+        self._n_items = n_items
+
+    def score_items(self, user_id, items):
+        recs = self._model.recommend(int(user_id), self._n_items, k=len(items))
+        n = len(recs)
+        rank_map = {item: (n - idx) / n for idx, item in enumerate(recs)}
+        return np.array([rank_map.get(i, 0.0) for i in items])
+
+    def __getattr__(self, name):
+        return getattr(self._model, name)
 
 
 # ── Metadata helpers ──
@@ -102,48 +123,50 @@ def discover_recommender_options(model_dir):
                 "label": "NCF（基础）",
                 "checkpoint": str(base_ckpt),
                 "family": "ncf",
-                "display_order": 0,
             }
         )
 
-    bpr_ckpt = model_path / "ncf_bpr_best.pt"
-    if bpr_ckpt.exists():
+    temporal_ckpt = model_path / "ncf_temporal_l5.0.pt"
+    if temporal_ckpt.exists():
         options.append(
             {
-                "label": "NCF-BPR",
-                "checkpoint": str(bpr_ckpt),
-                "family": "bpr",
-                "display_order": 1,
-            }
-        )
-
-    temporal_files = []
-    for ckpt in model_path.glob("ncf_temporal_l*.pt"):
-        match = re.search(r"ncf_temporal_l([0-9.]+)\.pt$", ckpt.name)
-        if match:
-            temporal_files.append((float(match.group(1)), ckpt))
-    for decay, ckpt in sorted(temporal_files, key=lambda x: x[0]):
-        options.append(
-            {
-                "label": f"NCF+Temporal λ={decay:g}",
-                "checkpoint": str(ckpt),
+                "label": "NCF+Temporal λ=5",
+                "checkpoint": str(temporal_ckpt),
                 "family": "ncf",
-                "decay_lambda": decay,
-                "display_order": 10 + decay,
+                "decay_lambda": 5.0,
             }
         )
+
+    for base_type, label in [
+        ("popularity", "Popularity"),
+        ("itemcf", "ItemCF"),
+        ("usercf", "UserCF"),
+        ("ta_itemcf", "TAItemCF"),
+    ]:
+        options.append({"label": label, "family": "base", "base_type": base_type})
 
     return options
 
 
-def load_recommender_from_option(option, device="cpu"):
+def load_recommender_from_option(option, train_df=None, n_users=None, n_items=None, device="cpu"):
     family = option["family"]
-    checkpoint = option["checkpoint"]
-    if family == "bpr":
-        model = load_bpr_model(checkpoint, device=device)
+    if family == "base":
+        base_type = option["base_type"]
+        if base_type == "popularity":
+            model = PopularityRecommender(train_df)
+        elif base_type == "itemcf":
+            model = ItemCF(train_df, n_users=n_users, n_items=n_items)
+        elif base_type == "usercf":
+            model = UserCF(train_df, n_users=n_users, n_items=n_items)
+        elif base_type == "ta_itemcf":
+            model = TAItemCF(train_df, n_users=n_users, n_items=n_items)
+        else:
+            raise ValueError(f"未知的 base 模型类型: {base_type}")
+        return BaseRecommenderWrapper(model, n_items)
+    elif family == "bpr":
+        return load_bpr_model(option["checkpoint"], device=device)
     else:
-        model = load_ncf_model(checkpoint, device=device)
-    return model
+        return load_ncf_model(option["checkpoint"], device=device)
 
 
 def _select_best_variant(metrics: dict, prefix: str):
@@ -273,7 +296,9 @@ def load_app_data(data_dir, model_dir, recommender_label=None):
             available = ", ".join(opt["label"] for opt in recommender_options)
             raise ValueError(f"未找到模型 {recommender_label}。可用模型: {available}")
 
-    recommender = load_recommender_from_option(selected_option)
+    recommender = load_recommender_from_option(
+        selected_option, train_df=train_df, n_users=n_users, n_items=n_items
+    )
     temporal_explainer = TemporalExplainer(train_df, itemcf_model=itemcf)
 
     # Load metadata for display
@@ -287,7 +312,7 @@ def load_app_data(data_dir, model_dir, recommender_label=None):
         "itemcf": itemcf,
         "recommender": recommender,
         "recommender_label": selected_option["label"],
-        "recommender_checkpoint": selected_option["checkpoint"],
+        "recommender_checkpoint": selected_option.get("checkpoint", "N/A"),
         "available_recommenders": recommender_options,
         "temporal_explainer": temporal_explainer,
         "item_id_to_asin": item_id_to_asin,
@@ -306,19 +331,29 @@ def _build_user_bundle(data, user_id):
     n_items = int(data["stats"]["n_items"])
     train_items = set(train_df.loc[train_df["user_id"] == user_id, "item_id"].tolist())
     candidate_items = [i for i in range(n_items) if i not in train_items]
-    scores = recommender.score_items(int(user_id), candidate_items)
-    order = scores.argsort()[::-1][:10]
+    raw_scores = recommender.score_items(int(user_id), candidate_items)
+
+    # Base models use synthetic rank-based scores (no real raw score)
+    has_raw = not isinstance(recommender, BaseRecommenderWrapper)
+
+    # Normalize scores to [0, 1] so different models are comparable
+    s_min, s_max = raw_scores.min(), raw_scores.max()
+    if s_max > s_min:
+        norm_scores = (raw_scores - s_min) / (s_max - s_min)
+    else:
+        norm_scores = np.ones_like(raw_scores)
+    order = norm_scores.argsort()[::-1][:10]
 
     bundle = []
     for idx in order:
         item_id = int(candidate_items[idx])
-        score = float(scores[idx])
         itemcf_exp = itemcf.explain(int(user_id), int(item_id), k=5)
         temporal_exp = temporal_explainer.explain(int(user_id), int(item_id), k=5)
         bundle.append(
             {
                 "item_id": int(item_id),
-                "score": score,
+                "score": float(norm_scores[idx]),
+                "raw_score": float(raw_scores[idx]) if has_raw else None,
                 "itemcf": itemcf_exp,
                 "temporal": temporal_exp,
             }
@@ -328,76 +363,113 @@ def _build_user_bundle(data, user_id):
 
 CARD_CSS = """
 <style>
-.rec-card {
+/* ── Hero Banner ── */
+.hero-banner {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 32px 40px;
+    border-radius: 16px;
+    margin-bottom: 28px;
+    box-shadow: 0 4px 20px rgba(102,126,234,0.3);
+}
+.hero-banner h2 { margin: 0 0 6px 0; font-size: 1.6em; font-weight: 700; }
+.hero-banner p  { margin: 0; font-size: 1.05em; opacity: 0.9; }
+
+/* ── Product Grid ── */
+.product-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 24px;
+}
+@media (max-width: 800px) { .product-grid { grid-template-columns: 1fr; } }
+
+/* ── Product Card ── */
+.product-card {
     background: #ffffff;
-    border: 1px solid #e0e0e0;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 16px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    transition: box-shadow 0.2s;
+    border: 1px solid #e8e8e8;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: flex;
+    flex-direction: column;
 }
-.rec-card:hover {
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+.product-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
 }
-.rec-header {
+.product-img-wrap {
+    width: 100%;
+    height: 180px;
+    overflow: hidden;
+    background: #f5f5f5;
     display: flex;
     align-items: center;
-    gap: 16px;
-    margin-bottom: 12px;
+    justify-content: center;
 }
-.rec-img {
-    width: 100px;
-    height: 100px;
+.product-img-wrap img {
+    width: 100%;
+    height: 100%;
     object-fit: cover;
-    border-radius: 8px;
-    border: 1px solid #eee;
-    background: #f8f8f8;
 }
-.rec-title {
-    font-size: 1.1em;
+.product-body {
+    padding: 16px 18px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+.product-title {
+    font-size: 1.05em;
     font-weight: 600;
     color: #1a1a1a;
-    margin: 0 0 4px 0;
+    margin: 0 0 8px 0;
+    line-height: 1.4;
 }
-.rec-score {
+.score-badge {
     display: inline-block;
-    background: #e8f5e9;
-    color: #2e7d32;
-    padding: 2px 10px;
-    border-radius: 12px;
+    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    color: #0a5c36;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 0.82em;
+    font-weight: 700;
+    margin-bottom: 10px;
+    width: fit-content;
+}
+.product-desc {
+    background: #f8f9fb;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.88em;
+    color: #555;
+    line-height: 1.55;
+    flex: 1;
+}
+.product-link {
+    display: inline-block;
+    margin-top: 10px;
+    color: #667eea;
+    text-decoration: none;
     font-size: 0.85em;
     font-weight: 600;
 }
-.rec-desc {
-    background: #f5f7fa;
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin: 8px 0;
-    font-size: 0.9em;
-    color: #444;
-    line-height: 1.5;
-}
+.product-link:hover { text-decoration: underline; }
+
+/* ── Explanation labels ── */
 .rec-exp-label {
     font-weight: 600;
-    color: #1565c0;
+    color: #667eea;
     margin-top: 10px;
     margin-bottom: 4px;
+    font-size: 0.9em;
 }
-.rec-link {
-    display: inline-block;
-    margin-top: 8px;
-    color: #1976d2;
-    text-decoration: none;
-    font-size: 0.88em;
-}
-.rec-link:hover { text-decoration: underline; }
 </style>
 """
 
 
-def _render_rec_card(entry, data):
-    """Render a single recommendation card using HTML/CSS."""
+def _render_ecommerce_card(entry, data):
+    """Render a product card for the e-commerce homepage."""
     import streamlit as st
 
     item_id = entry["item_id"]
@@ -407,72 +479,73 @@ def _render_rec_card(entry, data):
     display_name = _item_display_name(item_id, item_id_to_asin)
     img_url = _item_image_url(item_id, item_id_to_asin)
     amazon_url = _item_amazon_url(item_id, item_id_to_asin)
-    desc = _item_description(item_id, item_reviews, max_chars=200)
+    desc = _item_description(item_id, item_reviews, max_chars=120)
 
     if img_url:
-        img_html = (
-            f'<img src="{img_url}" class="rec-img" '
-            f'onerror="this.onerror=null;this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><rect fill=%22%23f0f0f0%22 width=%22100%22 height=%22100%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23999%22 font-size=%2212%22>无图片</text></svg>\';">'
+        img_tag = (
+            f'<img src="{img_url}" '
+            f'onerror="this.onerror=null;this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22180%22><rect fill=%22%23f0f0f0%22 width=%22300%22 height=%22180%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23aaa%22 font-size=%2214%22>暂无图片</text></svg>\';">'
         )
     else:
-        img_html = '<div class="rec-img" style="display:flex;align-items:center;justify-content:center;background:#f0f0f0;color:#999;font-size:12px;">无图片</div>'
+        img_tag = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:14px;">暂无图片</div>'
+
     link_html = (
-        f'<a href="{amazon_url}" target="_blank" class="rec-link">在 Amazon 查看 &rarr;</a>'
+        f'<a href="{amazon_url}" target="_blank" class="product-link">在 Amazon 查看 &rarr;</a>'
         if amazon_url else ""
     )
 
+    raw = entry.get("raw_score")
+    raw_hint = f'<span title="模型原始分: {raw:.4f}" style="cursor:help;font-size:0.78em;color:#888;margin-left:6px;">ⓘ</span>' if raw is not None else ""
+
     html = f"""
-    <div class="rec-card">
-        <div class="rec-header">
-            {img_html}
-            <div>
-                <p class="rec-title">{display_name}</p>
-                <span class="rec-score">推荐分数: {entry['score']:.4f}</span>
+    <div class="product-card">
+        <div class="product-img-wrap">{img_tag}</div>
+        <div class="product-body">
+            <p class="product-title">{display_name}</p>
+            <div style="margin-bottom:10px;">
+                <span class="score-badge">推荐度 {entry['score']:.4f}</span>{raw_hint}
             </div>
+            <div class="product-desc">{desc}</div>
+            {link_html}
         </div>
-        <div class="rec-desc">{desc}</div>
-        <p class="rec-exp-label">协同推理</p>
-        <p style="margin:0 0 4px 0; font-size:0.92em; color:#333;">{entry['itemcf']['explanation']}</p>
-        <p class="rec-exp-label">时序归因</p>
-        <p style="margin:0; font-size:0.92em; color:#333;">{entry['temporal']['explanation']}</p>
-        {link_html}
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
 
+    with st.expander("为什么推荐这个？"):
+        st.markdown(f"**协同推理：** {entry['itemcf']['explanation']}")
+        st.markdown(f"**时序归因：** {entry['temporal']['explanation']}")
 
-def main():
+
+def _render_home_page(data, user_id, user_bundle):
+    """Render the e-commerce style recommendation homepage."""
+    import streamlit as st
+
+    user_display = _user_display_name(int(user_id), data["user_id_to_name"])
+
+    st.markdown(
+        f"""<div class="hero-banner">
+            <h2>你好，{user_display}</h2>
+            <p>为你精选了 {len(user_bundle)} 件你可能喜欢的商品</p>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    for row_start in range(0, len(user_bundle), 2):
+        cols = st.columns(2)
+        for col, entry in zip(cols, user_bundle[row_start : row_start + 2]):
+            with col:
+                _render_ecommerce_card(entry, data)
+
+
+def _render_analysis_page(data, user_bundle):
+    """Render the system analysis page (model comparison + temporal analysis)."""
     import streamlit as st
     import plotly.express as px
 
-    st.set_page_config(page_title="可解释推荐系统", layout="wide")
-    st.markdown(CARD_CSS, unsafe_allow_html=True)
-    st.title("可解释推荐系统")
+    st.header("系统分析")
 
-    recommender_options = discover_recommender_options("outputs/models")
-    recommender_labels = [opt["label"] for opt in recommender_options]
-    selected_label = st.sidebar.selectbox("推荐模型", recommender_labels, index=0 if recommender_labels else 0)
-
-    data = load_app_data("data/processed", "outputs/models", recommender_label=selected_label)
-    st.caption(
-        f"推荐模型: `{data['recommender_label']}` | checkpoint: `{data['recommender_checkpoint']}` | "
-        f"模型类: `{data['recommender'].__class__.__name__}`"
-    )
-    test_users = sorted(data["test_df"]["user_id"].unique().tolist())
-    if not test_users:
-        st.warning("测试集中没有用户。")
-        return
-
-    user_id = st.sidebar.selectbox("用户ID", test_users, index=0)
-    user_display = _user_display_name(int(user_id), data["user_id_to_name"])
-    user_bundle = _build_user_bundle(data, int(user_id))
-
-    tab_rec, tab_model, tab_temporal = st.tabs(["推荐解释", "模型对比", "时序衰减分析"])
-
-    with tab_rec:
-        st.subheader(f"用户 {user_display} 的推荐结果")
-        for entry in user_bundle[:10]:
-            _render_rec_card(entry, data)
+    tab_model, tab_temporal = st.tabs(["模型对比", "时序衰减分析"])
 
     with tab_model:
         st.subheader("模型对比")
@@ -490,7 +563,6 @@ def main():
             )
             st.plotly_chart(fig, use_container_width=True)
 
-            # Highlight best model and ItemCF baseline
             best_row = compare_df.loc[compare_df["HitRate@10"].idxmax()]
             best_model = best_row["model"]
             best_hr = best_row["HitRate@10"]
@@ -536,6 +608,49 @@ def main():
                 st.info("没有可展示的推荐结果。")
         except Exception as exc:
             st.error(f"时序分析数据加载失败：{exc}")
+
+
+def main():
+    import streamlit as st
+
+    st.set_page_config(page_title="可解释推荐系统", layout="wide")
+    st.markdown(CARD_CSS, unsafe_allow_html=True)
+
+    # ── Sidebar: navigation + controls ──
+    page = st.sidebar.radio("页面", ["推荐首页", "系统分析"], horizontal=True)
+
+    recommender_options = discover_recommender_options("outputs/models")
+    recommender_labels = [opt["label"] for opt in recommender_options]
+    selected_label = st.sidebar.selectbox("推荐模型", recommender_labels, index=0 if recommender_labels else 0)
+
+    with st.spinner("正在加载数据和模型，请稍候..."):
+        data = load_app_data("data/processed", "outputs/models", recommender_label=selected_label)
+
+    test_users = sorted(data["test_df"]["user_id"].unique().tolist())
+    if not test_users:
+        st.warning("测试集中没有用户。")
+        return
+
+    user_id = st.sidebar.selectbox("用户ID", test_users, index=0)
+
+    # ── Sidebar: model info (collapsed) ──
+    recommender = data["recommender"]
+    model_cls = recommender._model.__class__.__name__ if isinstance(recommender, BaseRecommenderWrapper) else recommender.__class__.__name__
+    ckpt = data["recommender_checkpoint"]
+    ckpt_display = Path(ckpt).name if ckpt != "N/A" else "无（实时构建）"
+    with st.sidebar.expander("模型信息"):
+        st.caption(f"模型类: `{model_cls}`")
+        st.caption(f"Checkpoint: `{ckpt_display}`")
+
+    # ── Generate recommendations ──
+    with st.spinner("正在生成推荐结果..."):
+        user_bundle = _build_user_bundle(data, int(user_id))
+
+    # ── Route to selected page ──
+    if page == "推荐首页":
+        _render_home_page(data, user_id, user_bundle)
+    else:
+        _render_analysis_page(data, user_bundle)
 
 
 if __name__ == "__main__":
